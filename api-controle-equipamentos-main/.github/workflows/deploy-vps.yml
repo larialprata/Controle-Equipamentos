@@ -1,0 +1,70 @@
+name: Deploy to Hostinger VPS
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Integration tests (E2E / HTTP)
+        run: npm run test:e2e
+
+      - name: Production build
+        run: npm run build
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          port: ${{ secrets.VPS_PORT }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -e
+            export NVM_DIR="$HOME/.nvm"
+            . "$NVM_DIR/nvm.sh"
+            nvm use 22
+            node -v
+            npm -v
+            cd /home/deployer/api-controle-equipamentos
+            git pull origin main
+            npm ci
+            npx prisma generate
+            export NODE_OPTIONS="--max-old-space-size=2048"
+            npm run build
+            mkdir -p uploads/operations || true
+            # Não usar "source .env": senhas/URLs com ) ( ) & $ quebram o bash.
+            # O NestJS e o Prisma leem o .env automaticamente ao iniciar/gerar client.
+            export APP_ORIGIN="${{ secrets.APP_ORIGIN }}"
+            export APP_ORIGIN="${APP_ORIGIN//$'\n'/}"
+            export APP_ORIGIN="${APP_ORIGIN//$'\r'/}"
+            export GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}"
+            export GEMINI_MODEL="gemini-2.0-flash"
+            pm2 restart nestjs-api --update-env || pm2 start npm --name nestjs-api -- run start:prod
+            pm2 save

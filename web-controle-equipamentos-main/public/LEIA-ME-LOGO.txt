@@ -1,0 +1,2 @@
+Para o logo da Dimensional Engenharia aparecer no canto superior esquerdo:
+  - Coloque a imagem do logo neste pasta com o nome: logo-dimensional.png

@@ -1,0 +1,16 @@
+# Dependências e build
+node_modules/
+dist/
+uploads/
+
+# Variáveis de ambiente (nunca enviar ao GitHub)
+.env
+.env.local
+.env.*.local
+
+# Editor / SO
+.cursor/
+.vscode/
+.idea/
+.DS_Store
+*.log

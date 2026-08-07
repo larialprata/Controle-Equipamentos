@@ -1,0 +1,121 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model users {
+  id               String             @id @default(uuid())
+  full_name        String
+  phone            String?
+  cpf              String             @unique
+  email            String?            @unique
+  address          String?
+  password         String
+  cnh_photo        String?
+  is_active        Boolean            @default(false)
+  is_admin         Boolean            @default(false)
+  contract_id      String?
+  equipment_type_id String?
+  ativo_placa      String?
+  qr_payload       String?
+  qr_generated_at  DateTime?
+  created_at       DateTime           @default(now())
+  contract         contracts?         @relation(fields: [contract_id], references: [id], onDelete: SetNull)
+  equipment_type   equipment_types?   @relation(fields: [equipment_type_id], references: [id], onDelete: SetNull)
+  check_operations check_operations[]
+}
+
+model contracts {
+  id               String             @id @default(uuid())
+  name             String
+  active           Boolean            @default(true)
+  created_at       DateTime           @default(now())
+  users            users[]
+  equipments       equipments[]
+  obras            obras[]
+  check_operations check_operations[]
+}
+
+model obras {
+  id             String           @id @default(uuid())
+  code           String           // ex: "242", "232", "229"
+  contract_id    String
+  active         Boolean          @default(true)
+  created_at    DateTime         @default(now())
+  contract       contracts        @relation(fields: [contract_id], references: [id], onDelete: Cascade)
+  equipments     equipments[]
+  municipalities municipalities[]
+}
+
+model municipalities {
+  id         String   @id @default(uuid())
+  name       String
+  obra_id    String
+  active     Boolean  @default(true)
+  created_at DateTime @default(now())
+  obra       obras     @relation(fields: [obra_id], references: [id], onDelete: Cascade)
+}
+
+// Tipo de equipamento (um por nome). Mobile: usuário seleciona na lista; o ativo/placa é digitado em campo livre.
+model equipment_types {
+  id         String   @id @default(uuid())
+  name       String   @unique // ex: "Caminhão Basculante Trucado"
+  active     Boolean  @default(true)
+  created_at DateTime @default(now())
+  equipments  equipments[]
+  users      users[]
+  check_operations check_operations[]
+}
+
+// Legado: mantido para compatibilidade.
+model equipments {
+  id           String             @id @default(uuid())
+  name         String
+  contract_id  String?
+  obra_id      String?
+  company_name String?
+  equipment_type_id String?
+  ativo_placa  String?            @unique
+  qr_token     String             @unique @default(uuid())
+  active       Boolean            @default(true)
+  created_at   DateTime           @default(now())
+  contract     contracts?         @relation(fields: [contract_id], references: [id])
+  obra         obras?             @relation(fields: [obra_id], references: [id], onDelete: SetNull)
+  equipment_type equipment_types? @relation(fields: [equipment_type_id], references: [id], onDelete: SetNull)
+  check_operations check_operations[]
+}
+
+model check_operations {
+  id                   String         @id @default(uuid())
+  contract_id           String
+  equipment_id         String?        // legado
+  equipment_type_id    String?        // tipo selecionado (ex: Caminhão Basculante Trucado)
+  ativo_placa          String?        // texto digitado pelo usuário (ativo ou placa)
+  operation_type       OperationType
+  horimeter            Decimal        @db.Decimal(10, 2)
+  photo_url            String
+  latitude             Decimal        @db.Decimal(10, 8)
+  longitude            Decimal        @db.Decimal(11, 8)
+  municipio            String?
+  observation          String?
+  operation_datetime   DateTime
+  synced               Boolean       @default(true)
+  created_at           DateTime      @default(now())
+  device_id            String
+  created_by_user_id   String?
+  contract             contracts     @relation(fields: [contract_id], references: [id])
+  equipment            equipments?   @relation(fields: [equipment_id], references: [id], onDelete: SetNull)
+  equipment_type       equipment_types? @relation(fields: [equipment_type_id], references: [id], onDelete: SetNull)
+  created_by_user      users?        @relation(fields: [created_by_user_id], references: [id], onDelete: SetNull)
+  @@index([municipio])
+}
+
+enum OperationType {
+  checkin
+  checkout
+}
