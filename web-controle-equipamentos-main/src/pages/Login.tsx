@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { authApi } from '../api/auth';
 import type { User } from '../types';
-import { Lock, User as UserIcon, Loader2 } from 'lucide-react';
+import { Lock, User as UserIcon, Loader2, Eye, EyeOff } from 'lucide-react';
 
 type LoginLocationState = {
   message?: string;
@@ -16,6 +16,7 @@ type LoginLocationState = {
 const Login: React.FC = () => {
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
@@ -109,7 +110,11 @@ const Login: React.FC = () => {
       navigate(redirectTarget, { replace: true });
     } catch (err: any) {
       console.error('Login error:', err);
-      setError(err.response?.data?.message || 'Falha no login. Verifique suas credenciais.');
+      if (err.code === 'ERR_NETWORK' || err.message === 'Network Error') {
+        setError('Não foi possível conectar à API. Verifique se o backend está rodando em http://localhost:3001.');
+      } else {
+        setError(err.response?.data?.message || 'Falha no login. Verifique suas credenciais.');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -129,7 +134,7 @@ const Login: React.FC = () => {
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <form onSubmit={handleSubmit} className="space-y-6" autoComplete="off">
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               Nome, CPF ou e-mail
@@ -140,9 +145,14 @@ const Login: React.FC = () => {
               </div>
               <input
                 type="text"
+                name="login-identifier"
                 value={identifier}
                 onChange={(e) => setIdentifier(e.target.value)}
                 required
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
                 className="block w-full pl-10 pr-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-blue-500 dark:focus:ring-red-600 focus:border-blue-500 dark:focus:border-red-600"
                 placeholder="Digite seu nome, CPF ou e-mail"
               />
@@ -158,13 +168,23 @@ const Login: React.FC = () => {
                 <Lock className="h-5 w-5 text-gray-400 dark:text-gray-500" />
               </div>
               <input
-                type="password"
+                type={showPassword ? 'text' : 'password'}
+                name="login-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                className="block w-full pl-10 pr-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-blue-500 dark:focus:ring-red-600 focus:border-blue-500 dark:focus:border-red-600"
+                autoComplete="new-password"
+                className="block w-full pl-10 pr-10 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-blue-500 dark:focus:ring-red-600 focus:border-blue-500 dark:focus:border-red-600"
                 placeholder="••••••••"
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword((prev) => !prev)}
+                className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
+                aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+              >
+                {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+              </button>
             </div>
           </div>
 

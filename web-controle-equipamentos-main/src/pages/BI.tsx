@@ -7,6 +7,7 @@ import { authApi } from '../api/auth';
 import { equipmentsApi } from '../api/equipments';
 import client, { API_BASE_URL } from '../api/client';
 import { equipmentStructureApi } from '../api/equipmentStructure';
+import OperationsMap from '../components/OperationsMap';
 import type { CheckOperation, Contract, Equipment, EquipmentType, User } from '../types';
 
 function operationPhotoUrl(operationId: string | undefined): string | null {
@@ -115,61 +116,54 @@ function neighborhoodFromAddress(addr: any): string {
   return '';
 }
 
-/** Resolve bairro + município por coordenada com fallback de provedores. */
+function googleComponent(
+  components: Array<{ long_name?: string; short_name?: string; types?: string[] }> | undefined,
+  type: string
+): string {
+  if (!Array.isArray(components)) return '';
+  const found = components.find((c) => Array.isArray(c.types) && c.types.includes(type));
+  const name = found?.long_name ?? found?.short_name;
+  return typeof name === 'string' ? name.trim() : '';
+}
+
+/** Resolve bairro + município por coordenada (Google primeiro; fallbacks OSM/BigDataCloud). */
 async function resolveBairroMunicipioByLatLng(lat: number, lng: number): Promise<{ bairro: string; municipio: string }> {
-  // 1) BigDataCloud (costuma responder melhor em browser/CORS)
-  try {
-    const r = await fetch(
-      `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${encodeURIComponent(String(lat))}&longitude=${encodeURIComponent(String(lng))}&localityLanguage=pt`
-    );
-    if (r.ok) {
-      const json: any = await r.json();
-      const adminNames: string[] = Array.isArray(json?.localityInfo?.administrative)
-        ? json.localityInfo.administrative
-            .map((a: any) => a?.name)
-            .filter((n: any) => typeof n === 'string' && n.trim() !== '')
-        : [];
+  const googleKey = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined)?.trim();
 
-      const municipioCandidates: Array<string | undefined> = [
-        typeof json?.city === 'string' ? json.city : undefined,
-        typeof json?.locality === 'string' ? json.locality : undefined,
-        adminNames[3],
-        adminNames[2],
-        adminNames[4],
-        ...adminNames,
-      ];
+  // 1) Google Geocoding — melhor para municípios BR (ex.: Belford Roxo, Nova Iguaçu, Teresópolis)
+  if (googleKey) {
+    try {
+      const r = await fetch(
+        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${encodeURIComponent(String(lat))},${encodeURIComponent(String(lng))}&language=pt-BR&key=${encodeURIComponent(googleKey)}`
+      );
+      if (r.ok) {
+        const json: any = await r.json();
+        if (json?.status === 'OK' && Array.isArray(json.results) && json.results.length > 0) {
+          // Junta componentes de todos os resultados para achar município e bairro
+          const allComponents = json.results.flatMap((res: any) =>
+            Array.isArray(res?.address_components) ? res.address_components : []
+          );
 
-      let municipioCandidate: string | undefined;
-      for (const c of municipioCandidates) {
-        if (typeof c !== 'string') continue;
-        const v = c.trim();
-        if (!v) continue;
-        if (isRegiaoMetropolitanaName(v)) continue;
-        municipioCandidate = v;
-        break;
+          const municipio =
+            googleComponent(allComponents, 'administrative_area_level_2') ||
+            googleComponent(allComponents, 'locality') ||
+            googleComponent(allComponents, 'administrative_area_level_3') ||
+            '';
+
+          const bairro =
+            googleComponent(allComponents, 'sublocality_level_1') ||
+            googleComponent(allComponents, 'sublocality') ||
+            googleComponent(allComponents, 'neighborhood') ||
+            '—';
+
+          if (municipio && !isRegiaoMetropolitanaName(municipio)) {
+            return { municipio, bairro: bairro || '—' };
+          }
+        }
       }
-
-      const bairroCandidate: string | undefined =
-        (typeof json?.neighbourhood === 'string' ? json.neighbourhood : undefined) ||
-        (typeof json?.neighborhood === 'string' ? json.neighborhood : undefined) ||
-        (typeof json?.district === 'string' ? json.district : undefined) ||
-        (typeof json?.suburb === 'string' ? json.suburb : undefined) ||
-        (typeof json?.street === 'string' ? json.street : undefined);
-
-      if (municipioCandidate && !isRegiaoMetropolitanaName(municipioCandidate)) {
-        return {
-          municipio: municipioCandidate,
-          bairro: bairroCandidate?.trim() || '—',
-        };
-      }
-
-      // Se veio "Região Metropolitana", tenta tentar extrair bairro de todo caso
-      if (bairroCandidate?.trim()) {
-        return { municipio: '—', bairro: bairroCandidate.trim() };
-      }
+    } catch {
+      // fallback abaixo
     }
-  } catch {
-    // fallback abaixo
   }
 
   // 2) Nominatim (OSM)
@@ -193,19 +187,54 @@ async function resolveBairroMunicipioByLatLng(lat: number, lng: number): Promise
     // fallback abaixo
   }
 
-  // 3) maps.co (fallback extra)
+  // 3) BigDataCloud (client-side)
   try {
     const r = await fetch(
-      `https://geocode.maps.co/reverse?lat=${encodeURIComponent(String(lat))}&lon=${encodeURIComponent(String(lng))}`
+      `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${encodeURIComponent(String(lat))}&longitude=${encodeURIComponent(String(lng))}&localityLanguage=pt`
     );
     if (r.ok) {
       const json: any = await r.json();
-      const municipio = municipalityFromAddress(json?.address);
-      const bairro = neighborhoodFromAddress(json?.address);
-      if (municipio || bairro) {
+      const adminEntries: Array<{ name?: string; adminLevel?: number; description?: string }> = Array.isArray(
+        json?.localityInfo?.administrative
+      )
+        ? json.localityInfo.administrative
+        : [];
+
+      // No Brasil, município costuma ser adminLevel 2 (ou descrição com "município"/"cidade")
+      const byLevel2 = adminEntries.find((a) => a.adminLevel === 2)?.name;
+      const byDesc = adminEntries.find((a) => {
+        const d = String(a.description ?? '').toLowerCase();
+        return d.includes('municip') || d.includes('city') || d.includes('cidade');
+      })?.name;
+
+      const municipioCandidates: Array<string | undefined> = [
+        byLevel2,
+        byDesc,
+        typeof json?.city === 'string' ? json.city : undefined,
+        typeof json?.locality === 'string' ? json.locality : undefined,
+        ...adminEntries.map((a) => a.name),
+      ];
+
+      let municipioCandidate: string | undefined;
+      for (const c of municipioCandidates) {
+        if (typeof c !== 'string') continue;
+        const v = c.trim();
+        if (!v) continue;
+        if (isRegiaoMetropolitanaName(v)) continue;
+        municipioCandidate = v;
+        break;
+      }
+
+      const bairroCandidate: string | undefined =
+        (typeof json?.neighbourhood === 'string' ? json.neighbourhood : undefined) ||
+        (typeof json?.neighborhood === 'string' ? json.neighborhood : undefined) ||
+        (typeof json?.district === 'string' ? json.district : undefined) ||
+        (typeof json?.suburb === 'string' ? json.suburb : undefined);
+
+      if (municipioCandidate && !isRegiaoMetropolitanaName(municipioCandidate)) {
         return {
-          municipio: municipio || '—',
-          bairro: bairro || '—',
+          municipio: municipioCandidate,
+          bairro: bairroCandidate?.trim() || '—',
         };
       }
     }
@@ -961,7 +990,7 @@ const BI: React.FC = () => {
 
   const coordKeyFromLatLng = React.useCallback((lat: number, lng: number) => `${lat.toFixed(5)}|${lng.toFixed(5)}`, []);
 
-  // Pré-carrega (bairro+município) para as coordenadas exibidas na tabela (caching por coordenada arredondada)
+  // Pré-carrega município pelas coordenadas (cache por lat/lng arredondada)
   React.useEffect(() => {
     let cancelled = false;
     const unique: Record<string, { lat: number; lng: number }> = {};
@@ -980,8 +1009,10 @@ const BI: React.FC = () => {
     entries.forEach(([key]) => pendingLocationsRef.current.add(key));
 
     (async () => {
-      const CONCURRENCY = 3;
+      // Concorrência baixa para respeitar cota do Geocoding
+      const CONCURRENCY = 2;
       for (let i = 0; i < entries.length; i += CONCURRENCY) {
+        if (cancelled) return;
         const batch = entries.slice(i, i + CONCURRENCY);
         const results = await Promise.allSettled(
           batch.map(async ([key, { lat, lng }]) => {
@@ -1002,6 +1033,10 @@ const BI: React.FC = () => {
           }
           return next;
         });
+
+        if (i + CONCURRENCY < entries.length) {
+          await new Promise((resolve) => setTimeout(resolve, 120));
+        }
       }
     })();
 
@@ -1695,6 +1730,24 @@ const BI: React.FC = () => {
               </tbody>
             </table>
           </div>
+        </div>
+      </div>
+
+      <div className="bg-white dark:bg-gray-600 rounded-lg shadow-sm border border-gray-200 dark:border-gray-500 overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-500">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Mapa das Localizações</h2>
+          <p className="text-sm text-gray-500 dark:text-gray-200 mt-1">
+            Visualização geográfica das movimentações ({displayedOperations.length} registro{displayedOperations.length === 1 ? '' : 's'}).
+          </p>
+        </div>
+        <div className="p-3">
+          {loading ? (
+            <div className="h-full min-h-[400px] bg-gray-100 rounded-lg flex items-center justify-center text-gray-500">
+              Carregando mapa...
+            </div>
+          ) : (
+            <OperationsMap operations={displayedOperations} />
+          )}
         </div>
       </div>
 

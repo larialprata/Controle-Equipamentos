@@ -5,7 +5,7 @@ import axios from 'axios';
 // então precisamos de uma URL acessível ao cliente (ou usar reverse proxy no Nginx).
 const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
 const API_BASE_URL = (
-  configuredApiBaseUrl || (import.meta.env.DEV ? 'http://localhost:3000' : '')
+  configuredApiBaseUrl || (import.meta.env.DEV ? 'http://localhost:3001' : '')
 ).replace(/\/+$/, '');
 
 if (!API_BASE_URL) {
